@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2011 Whisper Systems
  *
  * This program is free software: you can redistribute it and/or modify
@@ -16,6 +16,7 @@
  */
 package org.thoughtcrime.securesms;
 
+import android.Manifest;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -39,7 +40,6 @@ import android.util.Log;
 import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.ViewStub;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -67,14 +67,15 @@ import org.thoughtcrime.securesms.jobs.AttachmentDownloadJob;
 import org.thoughtcrime.securesms.jobs.MmsDownloadJob;
 import org.thoughtcrime.securesms.jobs.MmsSendJob;
 import org.thoughtcrime.securesms.jobs.SmsSendJob;
+import org.thoughtcrime.securesms.mms.GlideRequests;
 import org.thoughtcrime.securesms.mms.PartAuthority;
 import org.thoughtcrime.securesms.mms.Slide;
 import org.thoughtcrime.securesms.mms.SlideClickListener;
+import org.thoughtcrime.securesms.permissions.Permissions;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.recipients.RecipientModifiedListener;
 import org.thoughtcrime.securesms.service.ExpiringMessageManager;
 import org.thoughtcrime.securesms.util.DateUtils;
-import org.thoughtcrime.securesms.util.DynamicLanguage;
 import org.thoughtcrime.securesms.util.DynamicTheme;
 import org.thoughtcrime.securesms.util.LongClickCopySpan;
 import org.thoughtcrime.securesms.util.LongClickMovementMethod;
@@ -108,6 +109,7 @@ public class ConversationItem extends LinearLayout
   private Locale        locale;
   private boolean       groupThread;
   private Recipient     recipient;
+  private GlideRequests glideRequests;
 
   protected View             bodyBubble;
   private TextView           bodyText;
@@ -117,13 +119,13 @@ public class ConversationItem extends LinearLayout
   private TextView           groupSender;
   private TextView           groupSenderProfileName;
   private View               groupSenderHolder;
-  private ImageView          secureImage;
+  private ImageView          insecureImage;
   private AvatarImageView    contactPhoto;
   private DeliveryStatusView deliveryStatusIndicator;
   private AlertView          alertView;
 
   private @NonNull  Set<MessageRecord>  batchSelected = new HashSet<>();
-  private @Nullable Recipient           conversationRecipient;
+  private @NonNull  Recipient           conversationRecipient;
   private @NonNull  Stub<ThumbnailView> mediaThumbnailStub;
   private @NonNull  Stub<AudioView>     audioViewStub;
   private @NonNull  Stub<DocumentView>  documentViewStub;
@@ -156,22 +158,22 @@ public class ConversationItem extends LinearLayout
 
     initializeAttributes();
 
-    this.bodyText                = (TextView)           findViewById(R.id.conversation_item_body);
-    this.dateText                = (TextView)           findViewById(R.id.conversation_item_date);
-    this.simInfoText             = (TextView)           findViewById(R.id.sim_info);
-    this.indicatorText           = (TextView)           findViewById(R.id.indicator_text);
-    this.groupSender             = (TextView)           findViewById(R.id.group_message_sender);
-    this.groupSenderProfileName  = (TextView)           findViewById(R.id.group_message_sender_profile);
-    this.secureImage             = (ImageView)          findViewById(R.id.secure_indicator);
-    this.deliveryStatusIndicator = (DeliveryStatusView) findViewById(R.id.delivery_status);
-    this.alertView               = (AlertView)          findViewById(R.id.indicators_parent);
-    this.contactPhoto            = (AvatarImageView)    findViewById(R.id.contact_photo);
-    this.bodyBubble              =                      findViewById(R.id.body_bubble);
-    this.mediaThumbnailStub      = new Stub<>((ViewStub) findViewById(R.id.image_view_stub));
-    this.audioViewStub           = new Stub<>((ViewStub) findViewById(R.id.audio_view_stub));
-    this.documentViewStub        = new Stub<>((ViewStub) findViewById(R.id.document_view_stub));
-    this.expirationTimer         = (ExpirationTimerView) findViewById(R.id.expiration_indicator);
-    this.groupSenderHolder       =                       findViewById(R.id.group_sender_holder);
+    this.bodyText                =            findViewById(R.id.conversation_item_body);
+    this.dateText                =            findViewById(R.id.conversation_item_date);
+    this.simInfoText             =            findViewById(R.id.sim_info);
+    this.indicatorText           =            findViewById(R.id.indicator_text);
+    this.groupSender             =            findViewById(R.id.group_message_sender);
+    this.groupSenderProfileName  =            findViewById(R.id.group_message_sender_profile);
+    this.insecureImage           =            findViewById(R.id.insecure_indicator);
+    this.deliveryStatusIndicator =            findViewById(R.id.delivery_status);
+    this.alertView               =            findViewById(R.id.indicators_parent);
+    this.contactPhoto            =            findViewById(R.id.contact_photo);
+    this.bodyBubble              =            findViewById(R.id.body_bubble);
+    this.mediaThumbnailStub      = new Stub<>(findViewById(R.id.image_view_stub));
+    this.audioViewStub           = new Stub<>(findViewById(R.id.audio_view_stub));
+    this.documentViewStub        = new Stub<>(findViewById(R.id.document_view_stub));
+    this.expirationTimer         =            findViewById(R.id.expiration_indicator);
+    this.groupSenderHolder       =            findViewById(R.id.group_sender_holder);
 
     setOnClickListener(new ClickListener(null));
 
@@ -184,6 +186,7 @@ public class ConversationItem extends LinearLayout
   @Override
   public void bind(@NonNull MasterSecret       masterSecret,
                    @NonNull MessageRecord      messageRecord,
+                   @NonNull GlideRequests      glideRequests,
                    @NonNull Locale             locale,
                    @NonNull Set<MessageRecord> batchSelected,
                    @NonNull Recipient          conversationRecipient)
@@ -191,6 +194,7 @@ public class ConversationItem extends LinearLayout
     this.masterSecret           = masterSecret;
     this.messageRecord          = messageRecord;
     this.locale                 = locale;
+    this.glideRequests          = glideRequests;
     this.batchSelected          = batchSelected;
     this.conversationRecipient  = conversationRecipient;
     this.groupThread            = conversationRecipient.isGroupRecipient();
@@ -238,9 +242,7 @@ public class ConversationItem extends LinearLayout
   }
 
   private void initializeAttributes() {
-    final int[]      attributes = new int[] {R.attr.conversation_item_bubble_background,
-                                             R.attr.conversation_list_item_background_selected,
-                                             R.attr.conversation_item_background};
+    final int[]      attributes = new int[] {R.attr.conversation_item_bubble_background};
     final TypedArray attrs      = context.obtainStyledAttributes(attributes);
 
     defaultBubbleColor = attrs.getColor(0, Color.WHITE);
@@ -387,7 +389,7 @@ public class ConversationItem extends LinearLayout
       if (documentViewStub.resolved()) documentViewStub.get().setVisibility(View.GONE);
 
       //noinspection ConstantConditions
-      mediaThumbnailStub.get().setImageResource(masterSecret,
+      mediaThumbnailStub.get().setImageResource(masterSecret, glideRequests,
                                                 ((MmsMessageRecord)messageRecord).getSlideDeck().getThumbnailSlide(),
                                                 showControls, false);
       mediaThumbnailStub.get().setThumbnailClickListener(new ThumbnailClickListener());
@@ -404,9 +406,14 @@ public class ConversationItem extends LinearLayout
     }
   }
 
-  private void setContactPhoto(Recipient recipient) {
-    if (! messageRecord.isOutgoing()) {
-      setContactPhotoForRecipient(recipient);
+  private void setContactPhoto(@NonNull Recipient recipient) {
+    if (contactPhoto == null) return;
+
+    if (messageRecord.isOutgoing() || !groupThread) {
+      contactPhoto.setVisibility(View.GONE);
+    } else {
+      contactPhoto.setAvatar(glideRequests, recipient, true);
+      contactPhoto.setVisibility(View.VISIBLE);
     }
   }
 
@@ -427,7 +434,7 @@ public class ConversationItem extends LinearLayout
   private void setStatusIcons(MessageRecord messageRecord) {
     indicatorText.setVisibility(View.GONE);
 
-    secureImage.setVisibility(messageRecord.isSecure() ? View.VISIBLE : View.GONE);
+    insecureImage.setVisibility(messageRecord.isSecure() ? View.GONE : View.VISIBLE);
     bodyText.setCompoundDrawablesWithIntrinsicBounds(0, 0, messageRecord.isKeyExchange() ? R.drawable.ic_menu_login : 0, 0);
     dateText.setText(DateUtils.getExtendedRelativeTimeSpanString(getContext(), locale, messageRecord.getTimestamp()));
 
@@ -438,17 +445,18 @@ public class ConversationItem extends LinearLayout
     } else {
       alertView.setNone();
 
-      if      (!messageRecord.isOutgoing()) deliveryStatusIndicator.setNone();
-      else if (messageRecord.isPending())   deliveryStatusIndicator.setPending();
-      else if (messageRecord.isDelivered()) deliveryStatusIndicator.setDelivered();
-      else                                  deliveryStatusIndicator.setSent();
+      if      (!messageRecord.isOutgoing())  deliveryStatusIndicator.setNone();
+      else if (messageRecord.isPending())    deliveryStatusIndicator.setPending();
+      else if (messageRecord.isRemoteRead()) deliveryStatusIndicator.setRead();
+      else if (messageRecord.isDelivered())  deliveryStatusIndicator.setDelivered();
+      else                                   deliveryStatusIndicator.setSent();
     }
   }
 
   private void setSimInfo(MessageRecord messageRecord) {
     SubscriptionManagerCompat subscriptionManager = new SubscriptionManagerCompat(context);
 
-    if (messageRecord.getSubscriptionId() == -1 || subscriptionManager.getActiveSubscriptionInfoList().size() < 2) {
+    if (messageRecord.getSubscriptionId() == -1 || !Permissions.hasAll(context, Manifest.permission.READ_PHONE_STATE) || subscriptionManager.getActiveSubscriptionInfoList().size() < 2) {
       simInfoText.setVisibility(View.GONE);
     } else {
       Optional<SubscriptionInfoCompat> subscriptionInfo = subscriptionManager.getActiveSubscriptionInfo(messageRecord.getSubscriptionId());
@@ -488,7 +496,7 @@ public class ConversationItem extends LinearLayout
             expirationManager.scheduleDeletion(id, mms, messageRecord.getExpiresIn());
             return null;
           }
-        }.execute();
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
       }
     } else {
       this.expirationTimer.setVisibility(View.GONE);
@@ -533,7 +541,7 @@ public class ConversationItem extends LinearLayout
     if (groupThread && !messageRecord.isOutgoing()) {
       this.groupSender.setText(recipient.toShortString());
 
-      if (recipient.getName() == null && recipient.getProfileName() != null) {
+      if (recipient.getName() == null && !TextUtils.isEmpty(recipient.getProfileName())) {
         this.groupSenderProfileName.setText("~" + recipient.getProfileName());
         this.groupSenderProfileName.setVisibility(View.VISIBLE);
       } else {
@@ -545,15 +553,6 @@ public class ConversationItem extends LinearLayout
     } else {
       this.groupSenderHolder.setVisibility(View.GONE);
     }
-  }
-
-  /// Helper Methods
-
-  private void setContactPhotoForRecipient(final Recipient recipient) {
-    if (contactPhoto == null) return;
-
-    contactPhoto.setAvatar(recipient, true);
-    contactPhoto.setVisibility(View.VISIBLE);
   }
 
   /// Event handlers
@@ -570,15 +569,12 @@ public class ConversationItem extends LinearLayout
 
   @Override
   public void onModified(final Recipient modified) {
-    Util.runOnMain(new Runnable() {
-      @Override
-      public void run() {
-        setBubbleState(messageRecord, recipient);
-        setContactPhoto(recipient);
-        setGroupMessageStatus(messageRecord, recipient);
-        setAudioViewTint(messageRecord, conversationRecipient);
-        setDocumentViewTint(messageRecord, conversationRecipient);
-      }
+    Util.runOnMain(() -> {
+      setBubbleState(messageRecord, recipient);
+      setContactPhoto(recipient);
+      setGroupMessageStatus(messageRecord, recipient);
+      setAudioViewTint(messageRecord, conversationRecipient);
+      setDocumentViewTint(messageRecord, conversationRecipient);
     });
   }
 
@@ -611,10 +607,10 @@ public class ConversationItem extends LinearLayout
         Intent intent = new Intent(context, MediaPreviewActivity.class);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         intent.setDataAndType(slide.getUri(), slide.getContentType());
-        if (!messageRecord.isOutgoing()) intent.putExtra(MediaPreviewActivity.ADDRESS_EXTRA, recipient.getAddress());
+        intent.putExtra(MediaPreviewActivity.ADDRESS_EXTRA, conversationRecipient.getAddress());
+        intent.putExtra(MediaPreviewActivity.OUTGOING_EXTRA, messageRecord.isOutgoing());
         intent.putExtra(MediaPreviewActivity.DATE_EXTRA, messageRecord.getTimestamp());
         intent.putExtra(MediaPreviewActivity.SIZE_EXTRA, slide.asAttachment().getSize());
-        intent.putExtra(MediaPreviewActivity.THREAD_ID_EXTRA, messageRecord.getThreadId());
 
         context.startActivity(intent);
       } else if (slide.getUri() != null) {

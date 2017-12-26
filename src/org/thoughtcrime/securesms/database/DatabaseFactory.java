@@ -16,6 +16,7 @@
  */
 package org.thoughtcrime.securesms.database;
 
+import android.Manifest;
 import android.content.ContentValues;
 import android.content.Context;
 import android.database.Cursor;
@@ -23,6 +24,8 @@ import android.database.sqlite.SQLiteConstraintException;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteDatabase.CursorFactory;
 import android.database.sqlite.SQLiteOpenHelper;
+import android.net.Uri;
+import android.provider.ContactsContract;
 import android.support.annotation.Nullable;
 import android.text.TextUtils;
 import android.util.Log;
@@ -40,6 +43,7 @@ import org.thoughtcrime.securesms.crypto.MasterCipher;
 import org.thoughtcrime.securesms.crypto.MasterSecret;
 import org.thoughtcrime.securesms.crypto.MasterSecretUtil;
 import org.thoughtcrime.securesms.notifications.MessageNotifier;
+import org.thoughtcrime.securesms.permissions.Permissions;
 import org.thoughtcrime.securesms.util.Base64;
 import org.thoughtcrime.securesms.util.DelimiterUtil;
 import org.thoughtcrime.securesms.util.Hex;
@@ -56,6 +60,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.security.SecureRandom;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -106,7 +111,11 @@ public class DatabaseFactory {
   private static final int PROFILES                                        = 41;
   private static final int PROFILE_SHARING_APPROVAL                        = 42;
   private static final int UNSEEN_NUMBER_OFFER                             = 43;
-  private static final int DATABASE_VERSION                                = 43;
+  private static final int READ_RECEIPTS                                   = 44;
+  private static final int GROUP_RECEIPT_TRACKING                          = 45;
+  private static final int UNREAD_COUNT_VERSION                            = 46;
+  private static final int MORE_RECIPIENT_FIELDS                           = 47;
+  private static final int DATABASE_VERSION                                = 47;
 
   private static final String DATABASE_NAME    = "messages.db";
   private static final Object lock             = new Object();
@@ -128,6 +137,7 @@ public class DatabaseFactory {
   private final GroupDatabase groupDatabase;
   private final RecipientDatabase recipientDatabase;
   private final ContactsDatabase contactsDatabase;
+  private final GroupReceiptDatabase groupReceiptDatabase;
 
   public static DatabaseFactory getInstance(Context context) {
     synchronized (lock) {
@@ -190,21 +200,26 @@ public class DatabaseFactory {
     return getInstance(context).contactsDatabase;
   }
 
+  public static GroupReceiptDatabase getGroupReceiptDatabase(Context context) {
+    return getInstance(context).groupReceiptDatabase;
+  }
+
   private DatabaseFactory(Context context) {
-    this.databaseHelper    = new DatabaseHelper(context, DATABASE_NAME, null, DATABASE_VERSION);
-    this.sms               = new SmsDatabase(context, databaseHelper);
-    this.encryptingSms     = new EncryptingSmsDatabase(context, databaseHelper);
-    this.mms               = new MmsDatabase(context, databaseHelper);
-    this.attachments       = new AttachmentDatabase(context, databaseHelper);
-    this.media             = new MediaDatabase(context, databaseHelper);
-    this.thread            = new ThreadDatabase(context, databaseHelper);
-    this.mmsSmsDatabase    = new MmsSmsDatabase(context, databaseHelper);
-    this.identityDatabase  = new IdentityDatabase(context, databaseHelper);
-    this.draftDatabase     = new DraftDatabase(context, databaseHelper);
-    this.pushDatabase      = new PushDatabase(context, databaseHelper);
-    this.groupDatabase     = new GroupDatabase(context, databaseHelper);
-    this.recipientDatabase = new RecipientDatabase(context, databaseHelper);
-    this.contactsDatabase  = new ContactsDatabase(context);
+    this.databaseHelper       = new DatabaseHelper(context, DATABASE_NAME, null, DATABASE_VERSION);
+    this.sms                  = new SmsDatabase(context, databaseHelper);
+    this.encryptingSms        = new EncryptingSmsDatabase(context, databaseHelper);
+    this.mms                  = new MmsDatabase(context, databaseHelper);
+    this.attachments          = new AttachmentDatabase(context, databaseHelper);
+    this.media                = new MediaDatabase(context, databaseHelper);
+    this.thread               = new ThreadDatabase(context, databaseHelper);
+    this.mmsSmsDatabase       = new MmsSmsDatabase(context, databaseHelper);
+    this.identityDatabase     = new IdentityDatabase(context, databaseHelper);
+    this.draftDatabase        = new DraftDatabase(context, databaseHelper);
+    this.pushDatabase         = new PushDatabase(context, databaseHelper);
+    this.groupDatabase        = new GroupDatabase(context, databaseHelper);
+    this.recipientDatabase    = new RecipientDatabase(context, databaseHelper);
+    this.groupReceiptDatabase = new GroupReceiptDatabase(context, databaseHelper);
+    this.contactsDatabase     = new ContactsDatabase(context);
   }
 
   public void reset(Context context) {
@@ -222,6 +237,7 @@ public class DatabaseFactory {
     this.pushDatabase.reset(databaseHelper);
     this.groupDatabase.reset(databaseHelper);
     this.recipientDatabase.reset(databaseHelper);
+    this.groupReceiptDatabase.reset(databaseHelper);
     old.close();
   }
 
@@ -535,6 +551,7 @@ public class DatabaseFactory {
       db.execSQL(PushDatabase.CREATE_TABLE);
       db.execSQL(GroupDatabase.CREATE_TABLE);
       db.execSQL(RecipientDatabase.CREATE_TABLE);
+      db.execSQL(GroupReceiptDatabase.CREATE_TABLE);
 
       executeStatements(db, SmsDatabase.CREATE_INDEXS);
       executeStatements(db, MmsDatabase.CREATE_INDEXS);
@@ -542,6 +559,7 @@ public class DatabaseFactory {
       executeStatements(db, ThreadDatabase.CREATE_INDEXS);
       executeStatements(db, DraftDatabase.CREATE_INDEXS);
       executeStatements(db, GroupDatabase.CREATE_INDEXS);
+      executeStatements(db, GroupReceiptDatabase.CREATE_INDEXES);
     }
 
     @Override
@@ -1230,6 +1248,8 @@ public class DatabaseFactory {
 
             members.add(DelimiterUtil.escape(TextSecurePreferences.getLocalNumber(context), ','));
 
+            Collections.sort(members);
+
             String        encodedGroupId = "__signal_mms_group__!" + Hex.toStringCondensed(groupId);
             ContentValues groupValues    = new ContentValues();
             ContentValues threadValues   = new ContentValues();
@@ -1319,6 +1339,80 @@ public class DatabaseFactory {
 
       if (oldVersion < UNSEEN_NUMBER_OFFER) {
         db.execSQL("ALTER TABLE thread ADD COLUMN has_sent INTEGER DEFAULT 0");
+      }
+
+      if (oldVersion < READ_RECEIPTS) {
+        db.execSQL("ALTER TABLE sms ADD COLUMN read_receipt_count INTEGER DEFAULT 0");
+        db.execSQL("ALTER TABLE mms ADD COLUMN read_receipt_count INTEGER DEFAULT 0");
+        db.execSQL("ALTER TABLE thread ADD COLUMN read_receipt_count INTEGER DEFAULT 0");
+      }
+
+      if (oldVersion < GROUP_RECEIPT_TRACKING) {
+        db.execSQL("CREATE TABLE group_receipts (_id INTEGER PRIMARY KEY, mms_id  INTEGER, address TEXT, status INTEGER, timestamp INTEGER)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS group_receipt_mms_id_index ON group_receipts (mms_id)");
+      }
+
+      if (oldVersion < UNREAD_COUNT_VERSION) {
+        db.execSQL("ALTER TABLE thread ADD COLUMN unread_count INTEGER DEFAULT 0");
+
+        try (Cursor cursor = db.query("thread", new String[] {"_id"}, "read = 0", null, null, null, null)) {
+          while (cursor != null && cursor.moveToNext()) {
+            long threadId    = cursor.getLong(0);
+            int  unreadCount = 0;
+
+            try (Cursor smsCursor = db.rawQuery("SELECT COUNT(*) FROM sms WHERE thread_id = ? AND read = '0'", new String[] {String.valueOf(threadId)})) {
+              if (smsCursor != null && smsCursor.moveToFirst()) {
+                unreadCount += smsCursor.getInt(0);
+              }
+            }
+
+            try (Cursor mmsCursor = db.rawQuery("SELECT COUNT(*) FROM mms WHERE thread_id = ? AND read = '0'", new String[] {String.valueOf(threadId)})) {
+              if (mmsCursor != null && mmsCursor.moveToFirst()) {
+                unreadCount += mmsCursor.getInt(0);
+              }
+            }
+
+            db.execSQL("UPDATE thread SET unread_count = ? WHERE _id = ?",
+                       new String[] {String.valueOf(unreadCount),
+                                     String.valueOf(threadId)});
+          }
+        }
+      }
+
+      if (oldVersion < MORE_RECIPIENT_FIELDS) {
+        db.execSQL("ALTER TABLE recipient_preferences ADD COLUMN system_contact_photo TEXT DEFAULT NULL");
+        db.execSQL("ALTER TABLE recipient_preferences ADD COLUMN system_phone_label TEXT DEFAULT NULL");
+        db.execSQL("ALTER TABLE recipient_preferences ADD COLUMN system_contact_uri TEXT DEFAULT NULL");
+
+        if (Permissions.hasAny(context, Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS)) {
+          try (Cursor cursor = db.query("recipient_preferences", null, null, null, null, null, null)) {
+            while (cursor != null && cursor.moveToNext()) {
+              Address address = Address.fromSerialized(cursor.getString(cursor.getColumnIndexOrThrow("recipient_ids")));
+
+              if (address.isPhone() && !TextUtils.isEmpty(address.toPhoneString())) {
+                Uri lookup = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(address.toPhoneString()));
+
+                try (Cursor contactCursor = context.getContentResolver().query(lookup, new String[] {ContactsContract.PhoneLookup.DISPLAY_NAME,
+                                                                                                     ContactsContract.PhoneLookup.LOOKUP_KEY,
+                                                                                                     ContactsContract.PhoneLookup._ID,
+                                                                                                     ContactsContract.PhoneLookup.NUMBER,
+                                                                                                     ContactsContract.PhoneLookup.LABEL,
+                                                                                                     ContactsContract.PhoneLookup.PHOTO_URI},
+                                                                               null, null, null))
+                {
+                  if (contactCursor != null && contactCursor.moveToFirst()) {
+                    ContentValues contentValues = new ContentValues(3);
+                    contentValues.put("system_contact_photo", contactCursor.getString(5));
+                    contentValues.put("system_phone_label", contactCursor.getString(4));
+                    contentValues.put("system_contact_uri", ContactsContract.Contacts.getLookupUri(contactCursor.getLong(2), contactCursor.getString(1)).toString());
+
+                    db.update("recipient_preferences", contentValues, "recipient_ids = ?", new String[] {address.toPhoneString()});
+                  }
+                }
+              }
+            }
+          }
+        }
       }
 
       db.setTransactionSuccessful();
