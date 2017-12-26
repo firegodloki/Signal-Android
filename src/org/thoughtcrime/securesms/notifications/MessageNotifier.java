@@ -384,19 +384,7 @@ public class MessageNotifier {
     Uri uri = recipient != null ? recipient.getRingtone() : null;
 
     if (uri == null) {
-      String ringtone = TextSecurePreferences.getNotificationRingtone(context);
-
-      if (ringtone == null) {
-        Log.w(TAG, "ringtone preference was null.");
-        return;
-      }
-
-      uri = Uri.parse(ringtone);
-
-      if (uri == null) {
-        Log.w(TAG, "couldn't parse ringtone uri " + ringtone);
-        return;
-      }
+      uri = TextSecurePreferences.getNotificationRingtone(context);
     }
 
     if (uri.toString().isEmpty()) {
@@ -518,7 +506,7 @@ public class MessageNotifier {
 
           return null;
         }
-      }.execute();
+      }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
   }
 

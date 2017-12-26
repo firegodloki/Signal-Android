@@ -116,7 +116,7 @@ public abstract class ContactSelectionActivity extends PassphraseRequiredActionB
 
   @Override
   public void onRefresh() {
-    new RefreshDirectoryTask(this).execute(getApplicationContext());
+    new RefreshDirectoryTask(this).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, getApplicationContext());
   }
 
   @Override
@@ -140,7 +140,7 @@ public abstract class ContactSelectionActivity extends PassphraseRequiredActionB
     protected Void doInBackground(Context... params) {
 
       try {
-        DirectoryHelper.refreshDirectory(params[0], masterSecret);
+        DirectoryHelper.refreshDirectory(params[0], masterSecret, true);
       } catch (IOException e) {
         Log.w(TAG, e);
       }
